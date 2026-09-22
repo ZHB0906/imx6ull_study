@@ -1,35 +1,35 @@
-# 重建后**期望**的 md5（从 rootfs-overlay/ 与源码算 ✓）
+# 重建后**期望**的 md5（从 rootfs-overlay/ 与源码算）
 # 生成时间: 2026-09-22 11:41:47 UTC
-# ★ 路径已按仓库改名更新：new/ → emmc/，old/ → sd/ ✓
+# 路径已按仓库改名更新：new/ → emmc/，old/ → sd/
 
-## rootfs 里的自家文件（这些必须逐字节一致 ✓✓；左边是**板子上**的路径 ✓）
-/etc/fw_env.config                                         2abe5fc384bf5c4557ccaef9a428800f
-/etc/init.d/S11vmhost                                      f9d24f0646761f3c4f5aa7f3616987f0
-/etc/init.d/S12launcher                                    d12a0ccdcbc4446604a35361b61309d5
-/etc/init.d/S39eth0                                        e8f13df1ed5b94b429d20be6a6ca966f
-/etc/init.d/S50telnetd                                     f5c0786f596d69f0b52b6495c0e8e26f
-/etc/init.d/S95wifi                                        91e59a73dfaec3c33e1073fe2b08f371
-/etc/init.d/S97timesync                                    f49d8416328f6b84c514c18fe351ed2c
-/etc/init.d/S99otaconfirm                                  4609945c1bcf81a2357f51803dfed84f
-/etc/ota.conf                                              da4e73cb8e4a8e3ce847d22954f87943
-/etc/wpa_supplicant.conf                                   d50e25dd0cd1db5a6d4f3ae514df0e90
-/opt/launcher/launcher                                     94253b2a4daf60428bf01c7b34450d99
-/opt/launcher/session.sh                                   cd541aed0d46e65afa04bac25ba4c6cd
-/opt/serialtool/run.sh                                     834f49961cc6de84eb412c992e9d9456
-/root/set-wifi.sh                                          70c3ee92bdaa49758eb866144e759742
-/root/.ssh/authorized_keys                                 ce5f3b7f5d510e20a58b53bbcc0e2771
-/usr/bin/fbcon-off                                         98d296e8c9094aae175b733461d21e78
-/usr/bin/ota-client.sh                                     98aa4365b1d659e73089943268c0cb4e
-/usr/bin/ota-upgrade.sh                                    99ef81b2f22fcf443845773dcbaedfbc
-/usr/bin/timesync.sh                                       c762f4af56e1550deb51324399b944dd
-/usr/sbin/fw_printenv                                      470d9d44e5d3392ba648c400c4f247fe
-/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf  ebc9b34d64380c1221b3f8a326475ca8
+## rootfs 里的自家文件（这些必须逐字节一致 ；左边是**板子上**的路径）
+/etc/fw_env.config 2abe5fc384bf5c4557ccaef9a428800f
+/etc/init.d/S11vmhost f9d24f0646761f3c4f5aa7f3616987f0
+/etc/init.d/S12launcher d12a0ccdcbc4446604a35361b61309d5
+/etc/init.d/S39eth0 e8f13df1ed5b94b429d20be6a6ca966f
+/etc/init.d/S50telnetd f5c0786f596d69f0b52b6495c0e8e26f
+/etc/init.d/S95wifi 91e59a73dfaec3c33e1073fe2b08f371
+/etc/init.d/S97timesync f49d8416328f6b84c514c18fe351ed2c
+/etc/init.d/S99otaconfirm 4609945c1bcf81a2357f51803dfed84f
+/etc/ota.conf da4e73cb8e4a8e3ce847d22954f87943
+/etc/wpa_supplicant.conf d50e25dd0cd1db5a6d4f3ae514df0e90
+/opt/launcher/launcher 94253b2a4daf60428bf01c7b34450d99
+/opt/launcher/session.sh cd541aed0d46e65afa04bac25ba4c6cd
+/opt/serialtool/run.sh 834f49961cc6de84eb412c992e9d9456
+/root/set-wifi.sh 70c3ee92bdaa49758eb866144e759742
+/root/.ssh/authorized_keys ce5f3b7f5d510e20a58b53bbcc0e2771
+/usr/bin/fbcon-off 98d296e8c9094aae175b733461d21e78
+/usr/bin/ota-client.sh 98aa4365b1d659e73089943268c0cb4e
+/usr/bin/ota-upgrade.sh 99ef81b2f22fcf443845773dcbaedfbc
+/usr/bin/timesync.sh c762f4af56e1550deb51324399b944dd
+/usr/sbin/fw_printenv 470d9d44e5d3392ba648c400c4f247fe
+/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf ebc9b34d64380c1221b3f8a326475ca8
 
-## 源码侧关键输入（解压后先核对这些 ✓）
-emmc/apps/launcher/main.cpp                                8f1697015e199d21fbadf684e6cf3142
-emmc/scripts/build-serialtool.sh                           a1409433bbd184d219069c84c3b60d4b
-emmc/ota/board/ota-client.sh                               98aa4365b1d659e73089943268c0cb4e
-emmc/ota/server/publish.sh                                 df98a9f9009043ee80001a729845901d
-emmc/br2-external/configs/atk_imx6ull_defconfig            d6118222ec94d6d9ca386e2687639bc8
-emmc/out/rebuild-snapshot/configs/linux.config             b827f565ba3169faa363e198fd80caaf
-README.md                                                  d6b396e2d926fac0e960276d3b1701ec
+## 源码侧关键输入（解压后先核对这些）
+emmc/apps/launcher/main.cpp 8f1697015e199d21fbadf684e6cf3142
+emmc/scripts/build-serialtool.sh a1409433bbd184d219069c84c3b60d4b
+emmc/ota/board/ota-client.sh 98aa4365b1d659e73089943268c0cb4e
+emmc/ota/server/publish.sh df98a9f9009043ee80001a729845901d
+emmc/br2-external/configs/atk_imx6ull_defconfig d6118222ec94d6d9ca386e2687639bc8
+emmc/out/rebuild-snapshot/configs/linux.config b827f565ba3169faa363e198fd80caaf
+README.md d6b396e2d926fac0e960276d3b1701ec
