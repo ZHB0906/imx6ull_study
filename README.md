@@ -69,9 +69,9 @@
 |---|---|
 | ![发现新版本](out/launcher-ota-avail2.png) | ![时间未同步](out/launcher-timesync-fallback.png) |
 
-| SerialTool 移植成品 | 排障对照：面板被误关后的界面 |
-|---|---|
-| ![SerialTool](out/serialtool-fixed3.png) | ![面板被关](out/serialtool-broken.png) |
+| SerialTool 移植成品 | 
+|---|
+| ![SerialTool](out/serialtool-fixed3.png) | 
 
 - **桌面**：横幅显示当前槽位（a 槽绿色、b 槽橙色）与版本；WiFi 徽标显示信号格、SSID、信号质量与 IP；
   下方是「启动 SerialTool」与「检查更新」两个按钮。
@@ -102,7 +102,7 @@
 
 ### 3.1 环境准备
 
--**Ubuntu 20.04 / 22.04**（本项目实测环境）
+-**Ubuntu 22.04**（本项目实测环境）
 -**2 核 / 4GB 内存 + ≥4GB swap**（`br2-build.sh` 注释里写了：`-j2` 是上限 别开大）
 -**磁盘 ≥15GB**（第三方源码 ~3GB + 编译产物 ~8GB）
 - 依赖包：
