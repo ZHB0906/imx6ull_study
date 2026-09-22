@@ -1,0 +1,27 @@
+#!/bin/sh
+#
+# fbcon-off —— 把内核的帧缓冲控制台(fbcon)从虚拟终端解绑
+#
+# 为什么必须做：
+#   fbcon 和 Qt(linuxfb) **共用同一块 /dev/fb0**。fbcon 有自己的一份"屏幕内容"
+#   （内核启动时画的是开机 logo），它任何一次重绘都会**把 logo 盖回 Qt 的窗口上** ✗。
+#   实测现象极具迷惑性：
+#     - Qt 进程一切正常（日志有 platform: linuxfb / screen: 1024x600）
+#     - 也真的在重绘（CPU 有占用、连续截图内容会变）
+#     - 但**读 /dev/fb0 看到的还是开机 logo** ✗
+#   解绑后立刻正常 ✓（这就是嵌入式 Qt 应用的标准做法）。
+#
+# 用法：在启动 Qt 程序**之前**执行一次即可（解绑是全局的，只需一次）
+#   sh /usr/bin/fbcon-off
+#
+# 注：vtcon0 是 (S) dummy device、vtcon1 是 (M) frame buffer device；
+#     两个都可以解绑，解绑 dummy 无害。重启后会恢复绑定，所以放在 init 里。
+#
+for v in /sys/class/vtconsole/vtcon*; do
+	[ -w "$v/bind" ] || continue
+	[ "$(cat "$v/bind" 2>/dev/null)" = "1" ] || continue
+	if echo 0 > "$v/bind" 2>/dev/null; then
+		echo "[fbcon-off] 已解绑 $(basename "$v") ($(cat "$v/name" 2>/dev/null))"
+	fi
+done
+exit 0

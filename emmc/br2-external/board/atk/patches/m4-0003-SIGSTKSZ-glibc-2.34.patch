@@ -1,0 +1,15 @@
+--- a/lib/c-stack.c
++++ b/lib/c-stack.c
+@@ -52,7 +52,11 @@
+ #endif
+ #ifndef SIGSTKSZ
+ # define SIGSTKSZ 16384
+-#elif HAVE_LIBSIGSEGV && SIGSTKSZ < 16384
++#elif HAVE_LIBSIGSEGV && !(defined __GLIBC__ && (__GLIBC__ > 2 || (__GLIBC__ == 2 && __GLIBC_MINOR__ >= 34)))
++/* glibc >= 2.34 defines SIGSTKSZ as a function-like macro (sysconf(_SC_SIGSTKSZ)),
++   which cannot appear in a preprocessor expression.  Original condition was
++   "HAVE_LIBSIGSEGV && SIGSTKSZ < 16384"; the comparison is dropped here.
++   In this build HAVE_LIBSIGSEGV is 0, so the branch is inert anyway.  */
+ /* libsigsegv 2.6 through 2.8 have a bug where some architectures use
+    more than the Linux default of an 8k alternate stack when deciding
+    if a fault was caused by stack overflow.  */

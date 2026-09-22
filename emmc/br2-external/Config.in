@@ -1,0 +1,1 @@
+source "$BR2_EXTERNAL_ATK_IMX6ULL_PATH/package/qscintilla/Config.in"

@@ -1,0 +1,60 @@
+#!/bin/sh
+#
+# S12launcher —— 开机把"桌面"拉起来（★ 排在网络脚本之前，桌面不依赖网络）（SerialTool 从桌面点进去）
+#
+# 为什么是 S12：
+#   ① 桌面**不能依赖网络**——原来的 S45wifi 会在无 AP/无网线时空等 50~80 秒，
+#      把排在后面的桌面(原 S90)和 SSH(S50dropbear) 全堵住 ✗（实测现象：不插网线就不出桌面）
+#   ② 桌面上显示的 IP 由内核 cmdline 的 ip= 直接配好（eth0 立即就有 IP），
+#      而且桌面每秒刷新一次，所以启动早也照样能显示 ✓
+#   ③ 只需要 /dev/fb0 与 /dev/input/event1 就绪即可（下面会等）
+#
+case "$1" in
+	start)
+		# 等 framebuffer 与**触摸设备**就绪。
+		# ★ 为什么要等触摸：本脚本排在 S12（网络之前），启动很早，
+		#   而 GT911 的 /dev/input/event1 可能还没枚举出来 —— 若那时就把 Qt 拉起来，
+		#   它会扫不到触摸设备，桌面就变成"点不动" ✗（踩过）。
+		i=0
+		while [ $i -lt 40 ]; do
+			[ -e /dev/fb0 ] && [ -e /dev/input/event1 ] && break
+			sleep 0.5
+			i=$((i + 1))
+		done
+		[ -e /dev/fb0 ] || echo "S12launcher: 没有 /dev/fb0，放弃启动桌面"
+		[ -e /dev/input/event1 ] || echo "S12launcher: ⚠️ 没有触摸设备，桌面可能点不动"
+		[ -x /opt/launcher/launcher ] || { echo "S12launcher: /opt/launcher/launcher 不存在，跳过"; exit 0; }
+		# 已经有会话在跑就不要重复启动（否则会出现两个桌面抢屏幕/触摸）
+		if [ -f /tmp/atk-session.pid ] && kill -0 "$(cat /tmp/atk-session.pid 2>/dev/null)" 2>/dev/null; then
+			echo "ATK desktop already running (pid $(cat /tmp/atk-session.pid))"
+			exit 0
+		fi
+		# ★ 必须先把 fbcon 解绑：否则内核控制台会把开机 logo 盖回桌面 ✗
+		#   （fbcon 与 Qt 共用 /dev/fb0，见 /usr/bin/fbcon-off 的说明）
+		sh /usr/bin/fbcon-off 2>/dev/null | sed 's/^/  /'
+		printf "Starting ATK desktop: "
+		cd /opt/launcher || exit 1
+		if command -v setsid >/dev/null 2>&1; then
+			setsid ./session.sh > /tmp/launcher.log 2>&1 < /dev/null &
+		else
+			./session.sh > /tmp/launcher.log 2>&1 < /dev/null &
+		fi
+		echo "ok"
+		;;
+	stop)
+		printf "Stopping ATK desktop: "
+		# 先杀应用（SerialTool 可能是会话拉起来的子进程），再杀桌面，最后杀会话
+		for p in $(pidof SerialTool 2>/dev/null) $(pidof launcher 2>/dev/null); do kill -9 "$p" 2>/dev/null; done
+		# 匹配所有以 session.sh 结尾的进程（./session.sh 与 /opt/launcher/session.sh 两种写法都要覆盖）
+		for p in $(ps -eo pid,args | awk '$NF ~ /session\.sh$/ {print $1}'); do kill -9 "$p" 2>/dev/null; done
+		[ -f /tmp/atk-session.pid ] && kill -9 "$(cat /tmp/atk-session.pid 2>/dev/null)" 2>/dev/null
+		rm -f /tmp/atk-session.pid
+		sleep 1
+		echo "ok"
+		;;
+	*)
+		echo "用法: $0 {start|stop}"
+		exit 1
+		;;
+esac
+exit 0

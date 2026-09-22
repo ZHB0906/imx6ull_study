@@ -1,0 +1,130 @@
+# ============================================================
+# atk_imx6ull.fragment —— new/ 工程的 Buildroot 配置增量
+#
+# 基线：configs/imx6ulevk_defconfig（cortex-A7 + NEON/VFPv4）
+# 用法：见 new/scripts/br2-setup.sh（merge 到 .config 后 olddefconfig）
+#
+# 核心取舍（对应实施计划 0.5 原则 2）：
+#   内核 + U-Boot 都**不**交给 Buildroot，Buildroot 只做 rootfs。
+#   好处：Buildroot 挂了不阻塞主线；内核那条路零补丁（HOSTCC="gcc -fcommon"）。
+# ============================================================
+
+# ---------- 目标平台 ----------
+BR2_arm=y
+BR2_cortex_a7=y
+BR2_ARM_FPU_NEON_VFPV4=y
+BR2_ARM_EABIHF=y
+
+# ---------- 工具链：Buildroot 自建（glibc + gcc 7.4.0 + C++）----------
+# gcc 选 7.x：不触发 gcc 8+ 的 uaccess.h const 坑，也不触发 gcc 10+ 的 -fno-common 坑
+BR2_TOOLCHAIN_BUILDROOT_GLIBC=y
+BR2_TOOLCHAIN_BUILDROOT_CXX=y
+BR2_GCC_VERSION_7_X=y
+# ★ 内核头 = 目标内核版本 4.1.15：glibc 会以 --enable-kernel=4.1 编，运行时 ABI 最贴
+BR2_KERNEL_HEADERS_VERSION=y
+BR2_DEFAULT_KERNEL_VERSION="4.1.15"
+#
+# ★★ 陷阱（2026-09-18 实测，差点漏过去）：手填版本号时，还必须另外声明
+#    这个版本"属于哪个系列"（下面这个 choice）。它才是 BR2_TOOLCHAIN_HEADERS_AT_LEAST
+#    的真正来源，而 glibc.mk 会拿它当 --enable-kernel=... 用。
+#    不声明 → choice 落到默认值 4.20 → AT_LEAST="4.20" → glibc 认定内核 ≥4.20
+#    （无回退地用新系统调用）→ 在 4.1.15 内核上跑不起来。
+#    判据：grep '^BR2_TOOLCHAIN_HEADERS_AT_LEAST=' .config  → 必须是 "4.1"
+BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_4_1=y
+# BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_4_20 is not set
+
+# ---------- 做法 B：内核 / U-Boot / 镜像后处理都不勾 ----------
+# BR2_LINUX_KERNEL is not set
+# BR2_TARGET_UBOOT is not set
+# BR2_PACKAGE_HOST_DOSFSTOOLS is not set
+# BR2_PACKAGE_HOST_GENIMAGE is not set
+# BR2_PACKAGE_HOST_MTOOLS is not set
+#
+# ★ POST_IMAGE_SCRIPT 是【字符串】符号，`is not set` 对它无效（会被忽略并保留原值）。
+#   不置空的话，构建末尾会去跑 freescale 的 post-image.sh 打 SD 卡镜像 → 直接失败。
+#   字符串要用 `=""` 来清。
+BR2_ROOTFS_POST_IMAGE_SCRIPT=""
+
+# ---------- 系统 ----------
+BR2_TARGET_GENERIC_GETTY_PORT="ttymxc0"
+BR2_TARGET_GENERIC_GETTY_BAUDRATE_115200=y
+BR2_TARGET_GENERIC_ROOT_PASSWD="root"
+BR2_TARGET_GENERIC_HOSTNAME="ATK-IMX6U-new"
+BR2_TARGET_GENERIC_ISSUE="ATK-IMX6ULL new/ Buildroot rootfs (WiFi: Red)"
+
+# ---------- rootfs overlay + post-build（把 8189fs.ko 拷进 /lib/modules）----------
+BR2_ROOTFS_OVERLAY="$(BR2_EXTERNAL_ATK_IMX6ULL_PATH)/board/atk/rootfs-overlay"
+BR2_ROOTFS_POST_BUILD_SCRIPT="$(BR2_EXTERNAL_ATK_IMX6ULL_PATH)/board/atk/post-build.sh"
+
+# ---------- busybox：默认配置里没有 telnetd，用片段补上 ----------
+BR2_PACKAGE_BUSYBOX_CONFIG_FRAGMENT_FILES="$(BR2_EXTERNAL_ATK_IMX6ULL_PATH)/board/atk/busybox-telnetd.fragment"
+
+# ---------- WiFi 与网络工具 ----------
+# ★ nl80211 留着，但 S45wifi 实测优先用 wext（Buildroot 的 wpa_supplicant 2.8 两个后端都带）
+BR2_PACKAGE_WPA_SUPPLICANT=y
+BR2_PACKAGE_WPA_SUPPLICANT_NL80211=y
+BR2_PACKAGE_WPA_SUPPLICANT_CLI=y
+BR2_PACKAGE_WPA_SUPPLICANT_PASSPHRASE=y
+BR2_PACKAGE_IW=y
+BR2_PACKAGE_WIRELESS_TOOLS=y
+
+# ---------- 触摸（LCD 配套，M6 用）----------
+BR2_PACKAGE_TSLIB=y
+
+# ---------- Qt5（给 SerialTool 串口/波形工具用；2026-09-19 加入）----------
+# 选 SerialTool 而不是 Qt6 项目，就是为了**不重编工具链**：它是 Qt5（作者用 5.6.3 编的），
+# 而我们这个 Buildroot 自带 Qt 5.11.3，模块齐全。内核、U-Boot、工具链全都不用动。
+# 说明见 2026-09-19 记录的讨论与 2026-09-20 的移植记录。
+BR2_PACKAGE_QT5=y                    # ★ 父开关：它才 select qt5base（少了这个下面全部不生效）
+BR2_PACKAGE_QT5BASE=y
+BR2_PACKAGE_QT5BASE_GUI=y
+BR2_PACKAGE_QT5BASE_WIDGETS=y          # SerialTool 是 Widgets + .ui 工程
+BR2_PACKAGE_QT5BASE_NETWORK=y          # 它有 TCP/UDP 调试功能
+BR2_PACKAGE_QT5BASE_XML=y
+BR2_PACKAGE_QT5BASE_LINUXFB=y          # ★ 板子无 GPU，只能软件渲染
+BR2_PACKAGE_QT5BASE_DEFAULT_QPA="linuxfb"
+BR2_PACKAGE_QT5BASE_FONTCONFIG=y       # 让它能扫到 /usr/share/fonts
+BR2_PACKAGE_QT5BASE_PNG=y
+BR2_PACKAGE_QT5BASE_GIF=y
+BR2_PACKAGE_QT5BASE_JPEG=y
+BR2_PACKAGE_DEJAVU=y                   # 英文界面字体（中文字体以后单独塞）
+BR2_PACKAGE_QT5SERIALPORT=y            # ★ 串口
+BR2_PACKAGE_QT5CHARTS=y                # ★ 波形显示
+BR2_PACKAGE_QT5SCRIPT=y                # 它的"脚本扩展视图"用了 QtScript
+BR2_PACKAGE_QSCINTILLA=y               # ★ 我们自己写的包（textedit.cpp 继承 QsciScintilla）
+
+# ---------- 存储工具（固化用：板子上直接 mke2fs 生成 ext4 镜像）----------
+# 思路：不做 fakeroot（见 external.mk 的说明），改为**在板子上**用 target 版 mke2fs -d
+#       把 NFS 根写成 ext4 到 eMMC p2 —— 板子是 root，属主天然正确。
+BR2_PACKAGE_E2FSPROGS=y
+
+# ---------- 远程访问（我用它操作板子；配 /root/.ssh/authorized_keys 免密）----------
+BR2_PACKAGE_DROPBEAR=y
+
+# ---------- 文件系统镜像：本轮暂关 ----------
+# ★ 为什么关掉：任一镜像目标（tar / ext2）都会经 fs/common.mk 的
+#   ROOTFS_COMMON_DEPENDENCIES 拉进 host-fakeroot，而 Buildroot 2019.02 自带的
+#   fakeroot 1.20.2 在 Ubuntu 22.04（glibc 2.35）上**不可用**：
+#     ① 编不过：libfakeroot.c 里 `_STAT_VER undeclared`（glibc 2.33 删了该宏）
+#     ② 更糟的是"补上 _STAT_VER 能编过、但功能静默失效"：
+#        nm -D libfakeroot.so 只 interpose 了 __xstat/__xstat64/chown，
+#        **没有 stat/lstat/fstat**；现代程序直接调 stat，伪造属主根本不被查询。
+#        实测 fakeroot -- sh -c 'touch /tmp/f; chown 1234:5678 /tmp/f; ls -ln /tmp/f'
+#        仍显示 1000 1000 —— 假成功比编不过更危险
+#   → 完整证据与后续修法见 br2-external/external.mk 顶部注释。
+#
+#   本轮（M3~M5）走 NFS 根，直接用 output/target/ 这份组装好的 rootfs 树，
+#   **不需要任何镜像**；/dev 由内核 devtmpfs 提供（CONFIG_DEVTMPFS_MOUNT=y）。
+#   ext2/tar 镜像留到"固化到 SD/eMMC"那个里程碑，届时先把 fakeroot 修好。
+# BR2_TARGET_ROOTFS_EXT2 is not set
+# BR2_TARGET_ROOTFS_TAR is not set
+
+# ---------- 下载源 ----------
+# ★ 宿主改成了手机热点（ens33 = 10.23.61.x），各包官方站点只有 13~100 KB/s，
+#   而 Buildroot 官方备份源实测 1.0 MB/s（且支持断点、内容哈希照样校验）。
+#   Buildroot 会先试 PRIMARY_SITE，找不到再回落到包自己的站点。
+BR2_PRIMARY_SITE="http://sources.buildroot.net"
+
+# ---------- 构建 ----------
+# 2 核 / 可用内存约 1.3G（另有 3.8G swap）：-j2，别开大
+BR2_JLEVEL=2

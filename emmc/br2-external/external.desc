@@ -1,0 +1,2 @@
+name: ATK_IMX6ULL
+desc: 正点原子 IMX6ULL (eMMC) + ATK-MW8189 SDIO WiFi —— 只做 rootfs，内核/U-Boot 手动编

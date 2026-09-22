@@ -1,0 +1,14 @@
+--- a/mkspecs/linux-g++/qmake.conf	2026-09-19 16:14:43.501583214 +0800
++++ b/mkspecs/linux-g++/qmake.conf	2026-09-19 16:14:43.563582363 +0800
+@@ -9,4 +9,11 @@
+ include(../common/linux.conf)
+ include(../common/gcc-base-unix.conf)
+ include(../common/g++-unix.conf)
++# --- br2-external: 宿主 GCC >= 11 兼容补丁 ---
++# GCC 11 起 <limits> 不再被间接包含，而 Qt 5.11 的 qbytearraymatcher.h 等直接用了
++# std::numeric_limits → 宿主侧（qmake 引导 / moc / rcc）报
++#   error: 'numeric_limits' is not a member of 'std'
++# 这里给宿主编译强制预包含 <limits>。只影响宿主 spec，不影响交叉编译的目标代码。
++QMAKE_CXXFLAGS += -include limits
++
+ load(qt_config)

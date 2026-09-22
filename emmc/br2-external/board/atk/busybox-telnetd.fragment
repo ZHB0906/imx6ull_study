@@ -1,0 +1,4 @@
+# busybox 片段：Buildroot 默认的 busybox.config 里 telnetd 是关掉的，
+# 这里补上，给 old/tools/board.py 那种"实验网无密码 root shell"留一个后备入口。
+CONFIG_TELNETD=y
+CONFIG_FEATURE_TELNETD_STANDALONE=y

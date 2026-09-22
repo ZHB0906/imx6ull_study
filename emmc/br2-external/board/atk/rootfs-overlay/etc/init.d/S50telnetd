@@ -1,0 +1,25 @@
+#!/bin/sh
+#
+# S50telnetd —— 实验网上开一个无密码 root shell
+#
+# ⚠️ 只在 192.168.10.0/24 这条 host-only 实验网里用；
+#    old 系统就是这么跑的（old/tools/board.py 依赖它）。
+#    真上生产必须删掉这个脚本，或者换成 dropbear + 密钥。
+#
+case "$1" in
+start)
+	if command -v telnetd >/dev/null 2>&1; then
+		telnetd -l /bin/sh
+		echo "[telnetd] 已启动（无密码 root shell，仅实验网）"
+	else
+		echo "[telnetd] busybox 里没编 telnetd"
+	fi
+	;;
+stop)
+	killall telnetd 2>/dev/null
+	;;
+*)
+	echo "用法: $0 {start|stop}"
+	exit 1
+	;;
+esac

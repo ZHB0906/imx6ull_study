@@ -1,0 +1,104 @@
+# ============================================================================
+# .gitignore —— ★ 这个仓库只放"我们自己的东西 + 配置 + 文档" ✓
+#   第三方源码树 / 编译产物 / 缓存 / 密钥 一律不进仓库 ✗
+#   （GitHub 单文件 >100MB 直接拒收 ✗；仓库 >1GB 会被警告 ✗）
+# ============================================================================
+
+# ── 编译产物（约 6-8 GB ✗ 全是编出来的 ✓）──
+emmc/buildroot/output/
+emmc/buildroot/host/
+emmc/out/emmc-backup/
+emmc/apps/build-*/
+emmc/apps/*-stage/
+*.o
+*.ko
+*.a
+*.lo
+*.so
+*.cmd
+*.mod
+*.mod.c
+*.symvers
+*.order
+*.tmp_*
+.tmp_versions/
+vmlinux
+System.map
+modules.builtin*
+
+# ── 第三方源码树（几 GB ✗ 可重新下载/解压 ✓ 见 REBUILD.md ✓）──
+emmc/linux/
+emmc/uboot/
+# 整个 Buildroot 树（含 dl/ 313MB 缓存 ✗）
+emmc/buildroot/
+sd/linux/
+sd/uboot/
+
+# ★ 注意 gitignore 的经典陷阱 ✗：整目录排除后，里面的子目录**无法用 ! 反选** ✗
+#   → 必须写成 "排除目录内容 + 反选子目录" ✓
+emmc/out/*
+!emmc/out/rebuild-snapshot/
+emmc/apps/SerialTool-src/.git/
+
+# ── 大体积二进制/镜像（>100MB ✗ 会被 GitHub 拒收 ✗✗）──
+#   注意：rebuild-snapshot 里的 ota-signing.key 已被上面的 *.key 规则挡住 ✓
+*.img
+*.tar.gz
+*.tar.bz2
+*.tar.xz
+*.ext4
+*.bin
+
+# ── ★★ 密钥与凭据（绝不能进公开仓库 ✗✗）──
+ota-signing.key
+*.key
+!*.pub.pem
+id_rsa*
+id_ed25519*
+.netrc
+.git-credentials
+**/wpa_supplicant.conf.psk
+*.psk
+
+# ── 运行期/临时 ──
+__pycache__/
+*.pyc
+*.log
+/tmp/
+.nfs-ready
+
+# ── 编辑器/系统 ──
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+
+# SerialTool 上游仓库的内层 .git（改成 .git-upstream ✓）
+#   ★ 为什么必须改名 ✗：内层有 .git 时，外层 git 会把这个目录当成"另一个仓库" ✗
+#     → git add 里面的文件**静默失败** ✗（实测踩到：139 个文件一个都没进去 ✗）
+#   → 改名后外层就能正常跟踪它的源码 ✓，而上游历史仍然保留在 .git-upstream 里 ✓
+emmc/apps/SerialTool-src/.git-upstream/
+
+# ============================================================================
+# 根目录的操作记录 / 手册**不上传** ✓（本地保留 ✓）
+#   只排除仓库根目录的 *.md ✓（/*.md 是"锚定根目录" ✓）
+#   → emmc/ 里第三方的 README.md 之类**不受影响** ✓
+#   → README.md（GitHub 首页 ✓）单独反选保留 ✓
+# ============================================================================
+/*.md
+!/README.md
+
+# ============================================================================
+# 2026-09-22 瘦身：这几项**不移入仓库** ✓（本地另有备份 ✓）
+#   ① 全量内核补丁 35.75MB（1227 个文件是 Realtek 第三方驱动 ✗）
+#      → 仓库里只留"我们那 4 个文件"的小补丁 ✓；全量版在本地
+#        /home/zhb/repo-trimmed-20260922/kernel-our-changes.patch.FULL-35MB ✓
+#   ② rebuild-snapshot 里的 br2-external 副本（与 emmc/br2-external 重复 ✓）
+#   ③ initramfs 里打包好的 initrd.img.gz（编译产物 ✓ 可由 root/ 重建 ✓）
+#   ④ sd/backups/uboot/*.imx（编好的 u-boot 二进制 ✓ 属产物）
+# ============================================================================
+emmc/out/rebuild-snapshot/configs/br2-external/
+emmc/ota/initramfs/initrd.img.gz
+sd/backups/uboot/*.imx
+patches/*.FULL-*

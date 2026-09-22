@@ -1,0 +1,23 @@
+<RCC>
+    <qresource prefix="/SerialTool">
+        <file>images/config.ico</file>
+        <file>images/exit.ico</file>
+        <file>images/logo.ico</file>
+        <file>images/pause.ico</file>
+        <file>images/save.ico</file>
+        <file>images/start.ico</file>
+        <file>images/open.ico</file>
+        <file>images/connect.ico</file>
+        <file>images/pin_down.ico</file>
+        <file>images/pin_up.ico</file>
+        <file>images/clear.ico</file>
+        <file>images/close.ico</file>
+        <file>images/port config.ico</file>
+    </qresource>
+    <qresource prefix="/license">
+        <file>license.html</file>
+    </qresource>
+    <qresource prefix="/config">
+        <file>default.ini</file>
+    </qresource>
+</RCC>

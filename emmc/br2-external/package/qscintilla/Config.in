@@ -1,0 +1,16 @@
+config BR2_PACKAGE_QSCINTILLA
+	bool "qscintilla"
+	depends on BR2_PACKAGE_QT5
+	select BR2_PACKAGE_QT5BASE
+	select BR2_PACKAGE_QT5BASE_GUI
+	select BR2_PACKAGE_QT5BASE_WIDGETS
+	select BR2_PACKAGE_QT5BASE_PRINTSUPPORT
+	help
+	  QScintilla is a port of the Scintilla editing component to Qt.
+	  SerialTool uses it as the base class of its text-transfer view
+	  (syntax highlighting for C++/bash/lua/json).
+
+	  https://www.riverbankcomputing.com/software/qscintilla/
+
+comment "qscintilla needs Qt5"
+	depends on !BR2_PACKAGE_QT5

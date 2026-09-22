@@ -1,0 +1,146 @@
+#!/bin/sh
+#
+# S45wifi —— 上电自动连 WiFi（new/ 工程）
+#
+# 复用 old 系统上验证过的三步，只是搬进开机脚本：
+#   ① rfkill 软阻塞必须先解（驱动注册的 rfkill 默认 soft=1，重启会复原）
+#   ② wlan0 由 8189fs.ko 创建，模块要 insmod/modprobe
+#   ③ wpa_supplicant 连 AP + udhcpc 拿 IP
+#
+# 判据（板子上敲）：
+#   iw dev wlan0 link     → Connected to xx:xx... + SSID
+#   ip -4 addr show wlan0 → inet 192.168.x.x
+#
+
+# 输出重定向到日志文件：本脚本的 echo/命令输出会写到控制台，
+# 而控制台(fbcon)与 Qt 桌面共用 /dev/fb0，会把桌面盖花（实测过），
+# 所以这里全部转存到 /tmp/wifi.log。
+exec >>/tmp/wifi.log 2>&1
+case "$1" in
+start)
+	echo "[wifi] 启动 ..."
+
+	KREL=$(uname -r)
+	KO=/lib/modules/$KREL/8189fs.ko
+
+	# ---------- ① 等 wlan0（最多 15 秒），没有就自己载模块 ----------
+	n=0
+	while [ $n -lt 15 ]; do
+		[ -e /sys/class/net/wlan0 ] && break
+		n=$((n + 1))
+		sleep 1
+	done
+
+	if [ ! -e /sys/class/net/wlan0 ]; then
+		echo "[wifi] wlan0 未出现，尝试载入 $KO"
+		if [ -f "$KO" ]; then
+			modprobe 8189fs 2>/dev/null || insmod "$KO"
+		else
+			echo "[wifi] 找不到 $KO —— post-build.sh 没把模块拷进来？"
+		fi
+		n=0
+		while [ $n -lt 15 ]; do
+			[ -e /sys/class/net/wlan0 ] && break
+			n=$((n + 1))
+			sleep 1
+		done
+	fi
+
+	if [ ! -e /sys/class/net/wlan0 ]; then
+		echo "[wifi] ❌ wlan0 始终没出现，放弃"
+		dmesg | tail -20
+		exit 1
+	fi
+	echo "[wifi] ✅ wlan0 就绪"
+
+	# ---------- ② 解 rfkill 软阻塞（写 sysfs，不依赖 rfkill 命令） ----------
+	for r in /sys/class/rfkill/rfkill*/; do
+		[ -f "$r/soft" ] && echo 0 >"$r/soft" 2>/dev/null
+	done
+	if command -v rfkill >/dev/null 2>&1; then
+		rfkill unblock all 2>/dev/null
+	fi
+
+	ip link set wlan0 up || {
+		echo "[wifi] ❌ ip link set wlan0 up 失败（多半还是 rfkill）"
+		exit 1
+	}
+
+	# ---------- ③ 连 AP + 拿 IP ----------
+	if [ ! -f /etc/wpa_supplicant.conf ]; then
+		echo "[wifi] 没有 /etc/wpa_supplicant.conf，只把 wlan0 拉起来"
+		exit 0
+	fi
+
+	mkdir -p /var/run/wpa_supplicant
+
+	# ---------- 驱动后端：wext 优先，nl80211 兜底 ----------
+	# 依据（2026-09-18 在 old 系统实测）：真正跑通的组合是
+	#   wpa_supplicant -D wext  +  rtl8189fs  +  4.1.15
+	# 本驱动上报 connect result 有缺陷（dmesg 里 __cfg80211_connect_result 的
+	# warn_slowpath），`iw dev wlan0 link` 会恒报 Not connected，
+	# 所以判定一律用 wpa_cli，不看 iw link。
+	# 注：Buildroot 里 wpa_supplicant 2.8 默认带 wext + nl80211 两个后端。
+	connected=no
+	for D in wext nl80211; do
+		echo "[wifi] 尝试 -D$D"
+		wpa_supplicant -B -i wlan0 -c /etc/wpa_supplicant.conf -D$D
+
+		i=0
+		while [ $i -lt 20 ]; do
+			i=$((i + 1))
+			sleep 1
+			if wpa_cli -i wlan0 status 2>/dev/null | grep -q "wpa_state=COMPLETED"; then
+				connected=yes
+				echo "[wifi] ✅ 已连上 AP（-D$D，$i 秒）"
+				break
+			fi
+		done
+		[ "$connected" = yes ] && break
+
+		echo "[wifi] -D$D 在 20 秒内没连上，换下一种后端"
+		killall wpa_supplicant 2>/dev/null
+		sleep 2
+	done
+
+	if [ "$connected" != yes ]; then
+		echo "[wifi] ⚠️ wext / nl80211 都没连上，检查 SSID/密码和信号"
+	fi
+
+	# udhcpc 一个 255.255.255.255 的地址都不算成功，所以要 -n（失败即退出）
+	udhcpc -i wlan0 -q -n -t 5 || echo "[wifi] ⚠️ udhcpc 没拿到 IP（可能 AP 没开 DHCP）"
+
+	# ---------- ④ 让 WiFi 成为公网的首选出口（★ 2026-09-19 实测需要）----------
+	# 这个新 rootfs 里 eth0 的默认路由来自内核 ip= 参数（指向虚拟机 192.168.10.1），
+	# 但虚拟机对我们这个实验网**没做 NAT**（实测走 eth0 的公网 ICMP/TCP 都不通），
+	# 而"两条 /0 默认路由谁生效"是不确定的。用最长前缀匹配把它变成确定的：
+	#   0.0.0.0/1 与 128.0.0.0/1 覆盖整个 IPv4，但都比 /0 更长 → 公网走 wlan0；
+	#   192.168.10.0/24 比 /1 更长 → 实验网（SSH/NFS/TFTP）仍走 eth0，不会被切断。
+	# （老系统当年也用这招绕过 ConnMan 的假默认路由，见 09-15 记录坑 17。）
+	GW=$(ip route | awk '/^default/ && /wlan0/ {print $3; exit}')
+	if [ -n "$GW" ]; then
+		ip route add 0.0.0.0/1 via "$GW" dev wlan0 2>/dev/null
+		ip route add 128.0.0.0/1 via "$GW" dev wlan0 2>/dev/null
+		echo "[wifi] 公网出口已指向 $GW（eth0 保留实验网）"
+	fi
+
+	echo "[wifi] 结果："
+	iw dev wlan0 link 2>/dev/null | sed 's/^/[wifi]   /'
+	ip -4 addr show wlan0 2>/dev/null | grep inet | sed 's/^/[wifi]   /'
+	ip route 2>/dev/null | head -6 | sed 's/^/[wifi]   /'
+	;;
+stop)
+	echo "[wifi] 停止"
+	killall wpa_supplicant 2>/dev/null
+	killall udhcpc 2>/dev/null
+	;;
+restart | reload)
+	$0 stop
+	sleep 1
+	$0 start
+	;;
+*)
+	echo "用法: $0 {start|stop|restart}"
+	exit 1
+	;;
+esac

@@ -1,0 +1,1 @@
+fatload mmc 1:1 83800000 initrd; fatload mmc 1:1 80800000 zImage; fatload mmc 1:1 83000000 imx6ull-14x14-emmc-7-1024x600-c.dtb; setenv bootargs console=ttymxc0,115200 root=/dev/mmcblk1p2 rootwait rw panic=10; bootz 80800000 83800000:0x1A2C82 83000000; run emmcboot

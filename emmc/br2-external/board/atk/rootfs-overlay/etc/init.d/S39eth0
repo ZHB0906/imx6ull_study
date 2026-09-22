@@ -1,0 +1,54 @@
+#!/bin/sh
+#
+# S39eth0 —— 用**用户态**给 eth0 配静态 IP
+#
+# ★★ 为什么必须从内核参数 ip= 挪到用户态 ✗✗（这是个"不插网线慢 2 分钟"的坑 ✓）
+#
+#   内核源码 net/ipv4/ipconfig.c 里写得很清楚：
+#       #define CONF_CARRIER_TIMEOUT  120000   /* Wait for carrier timeout  ← 120 秒 ✗ */
+#       /* wait for a carrier on at least one device */
+#       start = jiffies;
+#       while (time_before(jiffies, start + msecs_to_jiffies(CONF_CARRIER_TIMEOUT))) {
+#           for_each_netdev(&init_net, dev)
+#               if (ic_is_init_dev(dev) && netif_carrier_ok(dev)) goto have_carrier;
+#           msleep(1);
+#           pr_info("Waiting up to %d more seconds for network.\n", ...);
+#       }
+#   而 `ip=...:eth0:off` **只指定了 eth0** ✗ → 只要 eth0 没有链路（= 没插网线 ✗），
+#   它就会**死等满 120 秒** ✗✗；而且它是 `late_initcall` ✓
+#   → **在 init / 桌面之前**执行 ✗ → 现象就是用户反馈的"**不接网线启动慢很多**" ✓✓
+#
+#   而 ipconfig 的第一句就是：
+#       if (!ic_enable) return 0;          ← 没有 ip= 就整条路径直接跳过 ✓✓
+#   → 修法：**bootargs 里不放 ip=** ✓ → 一点等待都没有 ✓
+#
+#   代价：IP 改由用户态配 ✓ —— 这反而**更好** ✓：
+#     · 不再依赖链路状态 ✓（`ip addr add` 不等 carrier ✓，拔着网线也能立刻配好 ✓）
+#     · 配置在哪一目了然 ✓（不用去 U-Boot 环境里翻 ✗）
+#     · 桌面/服务不再被这 120 秒推后 ✓✓
+#
+#   实测（插网线）：内核在 4.49s 报 "eth0: link is not ready" ✓、
+#   7.53s 报 "Link is Up" ✓、**7.57s 才配上 IP** ✓ ← 可见确实在等链路 ✓
+#
+# 排在 S39（早于 S40network ✓ / S50dropbear ✓）：保证开机后第一次 SSH 就连得上 ✓
+#
+# ★ 只处理 start（rcK 关机时会用 stop 把所有 S* 反向跑一遍 ✗ 见坑 78 ✓）
+[ "$1" = "start" ] || exit 0
+
+export PATH=/sbin:/usr/sbin:/bin:/usr/bin
+
+ADDR=192.168.10.2/24
+GW=192.168.10.1
+
+# 接口不 up 的话，下面加默认路由会 ENETDOWN 失败（up ≠ 有链路 ✓ 没网线也能 up ✓）
+ip link set eth0 up 2>/dev/null
+
+# 已经有了就跳过 ✓（旧内核参数版本、或重复执行都不会出错 ✓）
+ip addr add "$ADDR" dev eth0 2>/dev/null
+ip route add default via "$GW" dev eth0 2>/dev/null
+
+# 打一行日志：拔网线时也要能看出"IP 配上了、只是没链路" ✓（排障很关键 ✓）
+LINK=$(cat /sys/class/net/eth0/carrier 2>/dev/null || echo '?')
+echo "[eth0] addr=$(ip -4 -o addr show eth0 2>/dev/null | awk '{print $4}')  gw=$GW  carrier=$LINK （1=插着网线 ✓ 0=没插 ✓ 两种都能配好 ✓）"
+
+exit 0

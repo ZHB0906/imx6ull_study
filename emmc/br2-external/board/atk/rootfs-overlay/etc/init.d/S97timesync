@@ -1,0 +1,34 @@
+#!/bin/sh
+#
+# S97timesync —— 开机自动对时
+#
+# 为什么单独一个脚本：
+#   板子没有 RTC 电池 ✗ → 每次开机都是 1970 ✗ → 桌面/日志的时间全是垃圾 ✗
+#   而 WiFi 要等到 S95 才通 ✓（实测约 28 秒 ✗）→ 对时必须排在它**后面** ✓
+#
+# ★★ 必须只处理 start ✗✗：
+#   /etc/init.d/rcK 关机时会把**所有** S* 脚本用 `stop` 反向跑一遍 ✗
+#   （S99otaconfirm 就因此写过一次"假确认" ✗ 见坑 78 ✓）
+#   所以第一行就挡掉 ✓
+#
+# ★ 必须**后台**跑 ✗：
+#   对时最长要试 3 轮 × 多个源 ✗（可能 30 秒+ ✗）→ 绝不能让开机等它 ✗
+#   用 setsid 起独立会话 ✓ —— rcS 退出时后台任务不会被收走 ✓
+#   （本项目的坑：裸 `( ... ) &` 子 shell 在 rcS 退出后会**静默消失** ✗）
+#   万一它还是死了也没关系 ✓：桌面每 5 分钟会自己再试一次 ✓（见 launcher 里 ✓）
+#
+[ "$1" = "start" ] || exit 0
+
+export PATH=/sbin:/usr/sbin:/bin:/usr/bin
+
+LOG=/slots/timesync.log
+[ -f "$LOG" ] && [ "$(wc -c < "$LOG" 2>/dev/null || echo 0)" -gt 8192 ] && mv -f "$LOG" "$LOG.1" 2>/dev/null
+echo "[$(date 2>/dev/null)] [S97timesync] 启动后台对时（板子无 RTC，开机时间不可信 ✓）" >>"$LOG" 2>/dev/null
+
+if command -v setsid >/dev/null 2>&1; then
+	setsid /usr/bin/timesync.sh --quiet >/dev/null 2>&1 </dev/null &
+else
+	/usr/bin/timesync.sh --quiet >/dev/null 2>&1 </dev/null &
+fi
+
+exit 0

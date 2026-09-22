@@ -1,0 +1,98 @@
+#!/bin/sh
+#
+# S99otaconfirm —— OTA 槽位"启动确认"（排在最后执行 ✓ = 前面的服务都已拉起 ✓）
+#
+# 作用：把 /slots/tries 清零 + 写 /slots/confirmed.txt，
+#       告诉 initramfs「这次启动是成功的 ✓」——否则连续多次未确认会自动回退到另一个槽 ✓
+#
+# ★★ 三个必须遵守的约束（都是实测踩坑换来的 ✗✗✗）：
+#
+#  (1) **必须忽略 stop** —— 第一版漏了这条 ✗
+#      /etc/init.d/rcK 会把**所有** S??* 脚本用 `stop` 反向跑一遍 ✗
+#      → 关机时本脚本会被再执行一次 ✗
+#      → 而此刻 /slots/active 已经指向**新槽**了 ✗
+#      → 于是它给新槽写了"假确认"，还顺手把 tries 清 0 ✗
+#      → "连续未确认自动回退"的保险被削弱 ✗（实测抓到 ✓）
+#      修法：只处理 start ✓
+#
+#  (2) **必须自己设 PATH** —— 第一版也漏了 ✗
+#      本脚本的父进程链是：initramfs /init → chroot → busybox init → rcS ✗
+#      PATH 是从 **initramfs** 继承下来的，不保证含 /bin ✗
+#      → 找不到 pidof → 健康检查恒失败 → **永远不确认** ✗
+#      → tries 只增不减 → 健康的 b 槽也会被回退 ✗✗（实测抓到 ✓）
+#      修法：脚本开头显式 export PATH ✓
+#
+#  (3) **不要用后台子进程** ✗
+#      rcS 退出后后台任务会被收走 → "确认"静默失效 ✗
+#      修法：前台重试式健康检查 ✓
+#
+# 另外记录一份日志到 /slots/otaconfirm.log ✓ —— 这类"启动期静默失效"没有日志根本查不出来 ✗
+#
+# 开机就把"继承来的 PATH / 参数"打到内核日志 ✓
+#   —— 这类"启动期静默失效"没有日志根本查不出来 ✗（实测：查了很久才定位 ✓）
+echo "[otaconfirm] 被调用: arg='$1' 继承PATH='$PATH' uptime=$(cut -d. -f1 /proc/uptime 2>/dev/null)s" >/dev/kmsg 2>/dev/null
+
+[ "$1" = "start" ] || exit 0
+
+export PATH=/sbin:/usr/sbin:/bin:/usr/bin
+SLOTS=/slots
+[ -d "$SLOTS" ] || exit 0
+
+LOG="$SLOTS/otaconfirm.log"
+if [ -f "$LOG" ] && [ "$(wc -c < "$LOG" 2>/dev/null || echo 0)" -gt 8192 ]; then
+	mv -f "$LOG" "$LOG.1" 2>/dev/null
+fi
+log() {
+	echo "[$(date 2>/dev/null)] pid=$$ uptime=$(cut -d. -f1 /proc/uptime 2>/dev/null)s $*" >>"$LOG" 2>/dev/null
+}
+
+log "启动确认开始（arg='$1'  PATH=$PATH）"
+
+# ---- 健康检查：最多重试 20 次 ✓（第一版是 sleep 5 后只查一次 ✗ 太脆）----
+n=0
+while [ "$n" -lt 20 ]; do
+	if pidof launcher >/dev/null 2>&1 || pidof dropbear >/dev/null 2>&1; then
+		break
+	fi
+	n=$((n + 1))
+	sleep 1
+done
+
+LP=$(pidof launcher 2>/dev/null)
+DP=$(pidof dropbear 2>/dev/null | head -1)
+
+if [ -z "$LP" ] && [ -z "$DP" ]; then
+	log "健康检查未通过 ✗（launcher/dropbear 都不在，等待 ${n}s）→ 不确认"
+	exit 0
+fi
+
+SLOT=$(cat "$SLOTS/active" 2>/dev/null)
+ROOT=$(mount | awk '/ \/ /{print $1}')
+
+# ---- 一致性检查：跑着的根必须真是 active 指向的那个槽 ✓ ----
+#   a 槽 = p2 本体 ✓   b 槽 = ext4 镜像 loop 出来的 ✓
+case "$SLOT" in
+b) EXPECT=loop ;;
+*) EXPECT=p2 ;;
+esac
+case "$ROOT" in
+*/loop*) ACTUAL=loop ;;
+*) ACTUAL=p2 ;;
+esac
+
+if [ "$EXPECT" != "$ACTUAL" ]; then
+	log "★ 不一致 ✗ active=$SLOT（期望 $EXPECT）但根是 $ROOT（实际 $ACTUAL）→ 不确认（让 tries 继续累积 → 触发回退 ✓）"
+	exit 0
+fi
+
+echo 0 >"$SLOTS/tries" 2>/dev/null
+{
+	echo "confirmed=$(date 2>/dev/null)"
+	echo "slot=$SLOT"
+	echo "root=$ROOT"
+	echo "launcher=$LP"
+	echo "dropbear=$DP"
+} >"$SLOTS/confirmed.txt" 2>/dev/null
+
+log "已确认 ✓ slot=$SLOT root=$ROOT launcher=$LP dropbear=$DP → tries=0（等待 ${n}s）"
+exit 0

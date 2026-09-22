@@ -1,0 +1,39 @@
+#!/bin/sh
+#
+# S11vmhost —— 把开发机（虚拟机）的 IP 写进 /etc/hosts
+#
+# 为什么需要（这是个 60 倍的性能坑，实测数据）：
+#   dropbear 接受连接时会**反向解析客户端 IP**。板上 /etc/resolv.conf 指向
+#   WiFi 网络的 DNS（10.23.61.195），它对 192.168.10.1 这个 PTR 不作答 →
+#   每次 SSH 都要卡满 DNS 超时（约 10 秒才发出 banner）：
+#
+#     resolv.conf = nameserver 10.23.61.195           → SSH 10.2 秒
+#     resolv.conf 留空                                → SSH 0.19 秒
+#     resolv.conf 加 options timeout:1 attempts:1     → SSH 1.2 秒
+#     /etc/hosts 里加 "192.168.10.1 vmhost"           → SSH 0.18 秒  ★用这个
+#
+#   删掉那行又退回 10.2 秒，加回来又变 0.18 秒（做过对照实验）。
+#
+# 为什么选 /etc/hosts 而不是改 resolv.conf：
+#   /etc/nsswitch.conf 是 `hosts: files dns`，files 先命中 → 根本不发 DNS 查询；
+#   而且 udhcpc 每次续约都会**重写 resolv.conf**（会把 options 行冲掉），
+#   但不会动 /etc/hosts，所以这个修法更稳。
+#
+# 放在 S11：必须早于 S50dropbear，这样开机后第一次 SSH 就是快的。
+#
+case "$1" in
+	start)
+		if ! grep -q '^192\.168\.10\.1[[:space:]]' /etc/hosts 2>/dev/null; then
+			printf '192.168.10.1\tvmhost\n' >> /etc/hosts
+		fi
+		;;
+	stop)
+		# 不用清理：这一行无害，留着下次也不用重加
+		;;
+	*)
+		echo "用法: $0 {start|stop}"
+		exit 1
+		;;
+esac
+
+exit 0

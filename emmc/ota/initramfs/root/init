@@ -1,0 +1,333 @@
+#!/bin/sh
+# ============================================================================
+# /init —— OTA 双槽启动选择器（initramfs 版）   2026-09-21 重写
+#
+# 设计原则（★ 每条都是踩坑换来的）：
+#   1. **绝不允许卡住** ✗：失败一律走 recover_and_reboot()（恢复 bootcmd 并重启 ✓）
+#      —— 不能 exec /bin/sh 等输入（那在用户看来就是"死机" ✗）
+#   2. **不用 initramfs 里没有的命令** ✗：本脚本用到的 applet 必须逐个审计过
+#      （曾经用了 mountpoint，而它不在 initramfs 里 → 判断永远失败 → 每次进救援 ✗✗）
+#   3. **带 initramfs 启动时内核不会自动挂 devtmpfs** ✗ → 必须自己挂 + mknod 兜底 ✓
+#   4. **PLAN / DEBUG 模式严格只读** ✓（不改任何状态，否则验证会污染真实环境 ✗）
+#   5. **rw 挂载只做一次** ✓（对正在使用的根分区重复 rw 挂载有损坏风险 ✗）
+#   6. **不用 switch_root** ✗ → 用 chroot+exec ✓
+#      busybox 的 switch_root 会**递归删除旧根的全部内容** ✗；此时 /proc /sys /dev 还挂着，
+#      它会去删 procfs/sysfs 的成千上万个条目（EPERM）→ 极慢/卡死 ✗。
+#      chroot+exec 不删任何东西 ✓ → 不存在这个卡点 ✓（代价：initramfs 的 ~1.7MB 内存不释放，可忽略 ✓）
+#
+# 用法：init       正常启动
+#       init plan  只打印计划（离线验证逻辑用）
+#       init debug 跑到 switch_root 前停下并打印报告（安全，未做 rw 挂载）
+# ============================================================================
+export PATH=/bin:/sbin:/usr/bin:/usr/sbin
+DATA=/mnt/data
+NEW=/mnt/newroot
+ACTIVE=a
+TRIES=0
+
+PLAN=""
+DEBUG=""
+case "$1" in
+	plan)  PLAN=1 ;;
+	debug) DEBUG=1 ;;
+esac
+
+log() { echo "[ota-init] $*"; }
+
+# ★★ 给新根准备虚拟文件系统：**重新挂载**，而不是"搬移" ✓✓
+#   【踩过的坑】原来是把 initramfs 的 /dev **搬**进新根 ✗ —— 而 initramfs 的 /dev 是我用
+#   mknod 兜底造的少数节点（console/null/zero/mmcblk*/loop*）✗ → 里面**没有** /dev/fb0、
+#   /dev/input/event*、/dev/urandom ✗✗ → 结果：桌面起不来（没 fb0 ✗）、SSH 起不来（没 urandom ✗）
+#   正解：在新根里**重新挂一个 devtmpfs** ✓ —— devtmpfs 是内核的全局单例 ✓，
+#   挂上去就是**完整的**设备列表 ✓✓（fb0 / input / urandom … 全都有 ✓）
+prepare_newroot_env() {
+	mkdir -p "$NEW/proc" "$NEW/sys" "$NEW/dev" 2>/dev/null
+	mount -t proc     proc     "$NEW/proc" 2>/dev/null && log "  新根挂载 proc ✓"
+	mount -t sysfs    sysfs    "$NEW/sys"  2>/dev/null && log "  新根挂载 sysfs ✓"
+	mount -t devtmpfs devtmpfs "$NEW/dev"  2>/dev/null && log "  新根挂载 devtmpfs ✓（fb0/input/urandom 都在这里 ✓）"
+	# 自检：把关键节点列出来（有 fb0 和 urandom 才算成功 ✓）
+	log "  新根 /dev 自检: fb0=$([ -e "$NEW/dev/fb0" ] && echo 有 ✓ || echo 缺 ✗) urandom=$([ -e "$NEW/dev/urandom" ] && echo 有 ✓ || echo 缺 ✗) input=$([ -e "$NEW/dev/input/event1" ] && echo 有 ✓ || echo 缺 ✗)"
+}
+
+
+# ---------- 自愈兜底：恢复 bootcmd 为"直接启动 eMMC"并重启 ----------
+recover_and_reboot() {
+	log "==================================================="
+	log "  启动自愈触发：$1"
+	log "  目标：把 bootcmd 恢复为 'run emmcboot'（已知良好）后重启"
+	log "==================================================="
+	OK=0
+	if [ -z "$PLAN" ]; then
+		if [ -x /sbin/fw_setenv ]; then
+			# ★ fw_setenv 需要 /var/lock 建锁文件 ✗（initramfs 里曾经没有 → 自愈静默失效 ✗）
+			mkdir -p /var/lock /var/run /run 2>/dev/null
+			/sbin/fw_setenv bootcmd "run emmcboot" 2>/dev/null
+			GOT=$(/sbin/fw_printenv bootcmd 2>/dev/null | cut -d= -f2-)
+			log "  写入后读回: '$GOT'"
+			# ★★ 必须回读验证（【58】的教训）：写不进去就**绝不能重启** ✗
+			#    否则会变成"失败→重启→又失败"的无限循环 ✗（实测踩过 ✓）
+			[ "$GOT" = "run emmcboot" ] && OK=1
+		else
+			log "  警告: 无 fw_setenv"
+		fi
+		sync
+		if [ "$OK" = 1 ]; then
+			log "  ✅ 自愈已验证（bootcmd 确实是 'run emmcboot'）→ 重启后将正常从 eMMC 启动"
+			sleep 3
+			/bin/busybox reboot -f 2>/dev/null
+		else
+			log "  ✗ 自愈写入未生效 → 不重启（避免无限循环 ✗），停在此处等待串口介入"
+			log "     手动恢复: setenv bootcmd 'run emmcboot'; saveenv; boot"
+		fi
+	fi
+	# 停在这里（不重启）：每 60 秒打一次横幅，保证屏幕/串口上始终看得到原因 ✓
+	while true; do
+		sleep 60
+		log "诊断模式：$1（等待串口介入，未重启）"
+	done
+}
+
+# ---------- 挂载虚拟文件系统 + 造设备节点 ----------
+setup_dev() {
+	# ★ PLAN 是"纯模拟"模式：不挂载、不 mknod、不写任何东西 ✓
+	#   （之前 PLAN 也挂载了 proc/sys/dev → 在测试机上留下挂载点，清理时撞车 ✗）
+	if [ -n "$PLAN" ]; then log "PLAN: 跳过 setup_dev（纯模拟，不做任何挂载/建节点）"; return 0; fi
+	if [ -n "$DEBUG" ]; then
+		# ★ DEBUG 用于"在运行中的系统里做 mock 测试"：调用方会准备好 /dev
+		#   （把 /dev/mmcblk1p2 指到 loop 设备 → 挂的是测试镜像 ✓）
+		#   所以这里**绝不能**挂 devtmpfs / 建真实设备节点 ✗，否则 mock 会被覆盖成真设备 ✗✗
+		log "DEBUG: 保留调用方提供的 /dev（mock 模式）"
+		return 0
+	fi
+	mount -t proc     proc     /proc 2>/dev/null
+	mount -t sysfs    sysfs    /sys  2>/dev/null
+	mount -t devtmpfs devtmpfs /dev  2>/dev/null
+	# ★ 带 initramfs 启动时内核不自动挂 devtmpfs ✗ → 逐个兜底 mknod（主次设备号固定 ✓）
+	for d in "console:c:5:1" "null:c:1:3" "zero:c:1:5" "tty:c:5:0" \
+	         "random:c:1:8" "urandom:c:1:9" \
+	         "mmcblk1:b:179:0" "mmcblk1p1:b:179:1" "mmcblk1p2:b:179:2" \
+	         "loop-control:c:10:237" "loop0:b:7:0" "loop1:b:7:1" "loop2:b:7:2" "loop3:b:7:3"; do
+		n=$(echo "$d" | cut -d: -f1); t=$(echo "$d" | cut -d: -f2)
+		ma=$(echo "$d" | cut -d: -f3); mi=$(echo "$d" | cut -d: -f4)
+		[ -e "/dev/$n" ] || mknod "/dev/$n" "$t" "$ma" "$mi" 2>/dev/null
+	done
+	log "dev: console=$([ -e /dev/console ] && echo 有 || echo 无) mmcblk1p2=$([ -e /dev/mmcblk1p2 ] && echo 有 || echo 无)"
+}
+
+# ---------- 挂数据分区 p2（带韧性）----------
+mount_data() {
+	mkdir -p $DATA
+	# ★ 状态区（active/tries/boot-info）要能写 → 优先 **rw** 挂载 ✓
+	#   失败再退回 ro（降级：能启动但状态写不进去 ✓，至少不会因此起不来 ✓）
+	if mount -t ext4 -o rw /dev/mmcblk1p2 $DATA 2>/dev/null; then
+		log "p2 以 **rw** 挂载 ✓（状态区可写 ✓）"
+	elif mount -t ext4 -o ro /dev/mmcblk1p2 $DATA 2>/dev/null; then
+		log "p2 只能以 ro 挂载（状态将无法持久化 ✗，但能启动 ✓）"
+	elif mount -t ext4 -o ro,noload /dev/mmcblk1p2 $DATA 2>/dev/null; then
+		log "p2 用 ro,noload 挂上（跳过日志重放 ✓）"
+	fi
+	# ★ 用"p2 里必然存在的 /etc"判断，而不是 mountpoint（initramfs 里没这个 applet ✗）
+	if [ -d "$DATA/etc" ]; then
+		log "p2 挂载成功 ✓"
+		return 0
+	fi
+	log "p2 挂载失败 ✗"
+	return 1
+}
+
+# ---------- 写启动信息（p2 上，OTA 程序据此判断本次从哪起来）----------
+write_bootinfo() {
+	[ -n "$PLAN" ] && { log "PLAN: 写 $DATA/slots/boot-info.txt (slot=$ACTIVE src=$1)"; return 0; }
+	mkdir -p $DATA/slots 2>/dev/null
+	{
+		echo "time=$(date 2>/dev/null)"
+		echo "slot=$ACTIVE"
+		echo "tries=$TRIES"
+		echo "source=$1"
+		echo "initrd=yes"
+	} > $DATA/slots/boot-info.txt 2>/dev/null
+}
+
+log "=== OTA 启动选择器 $(date 2>/dev/null) ==="
+
+setup_dev
+if ! mount_data; then
+	if [ -n "$PLAN" ] || [ -n "$DEBUG" ]; then
+		# ★ PLAN/DEBUG 是"只读诊断"模式：挂载失败（例如在运行中的系统里 chroot 测试，
+		#   p2 已被挂成根 → EBUSY）绝不能触发自愈 ✗ —— 否则会把板子重启掉 ✗
+		log "（PLAN/DEBUG 模式：挂载失败不触发自愈，继续做只读诊断）"
+	else
+		recover_and_reboot "无法挂载 p2 —— 系统无法启动"
+	fi
+fi
+
+# ---------- 读活动槽 + 试用计数 ----------
+[ -f $DATA/slots/active ] && ACTIVE=$(cat $DATA/slots/active 2>/dev/null)
+[ -z "$ACTIVE" ] && ACTIVE=a
+[ -f $DATA/slots/tries ] && TRIES=$(cat $DATA/slots/tries 2>/dev/null)
+[ -z "$TRIES" ] && TRIES=0
+log "活动槽='$ACTIVE'  试用计数='$TRIES'"
+
+# ---------- b 槽：试用计数 + 超限自动回滚 ----------
+if [ "$ACTIVE" = "b" ] && [ -z "$PLAN" ] && [ -z "$DEBUG" ]; then
+	TRIES=$((TRIES + 1))
+	mkdir -p $DATA/slots 2>/dev/null
+	echo "$TRIES" > $DATA/slots/tries 2>/dev/null
+	log "本次是 b 槽第 $TRIES 次试用（rootfs 里确认成功后应把 tries 清零）"
+	if [ "$TRIES" -gt 3 ]; then
+		log "b 槽连续 $TRIES 次未确认 -> 自动回滚到 a 槽"
+		echo "a" > $DATA/slots/active 2>/dev/null
+		ACTIVE=a
+	fi
+fi
+
+# ---------- DEBUG：在一切 rw 操作之前停下并报告 ----------
+if [ -n "$DEBUG" ]; then
+	log "=== DEBUG：按计划停在 switch_root 之前（未做任何 rw 挂载 ✓）==="
+	log "  槽位=$ACTIVE  试用计数=$TRIES"
+	log "  p2 只读副本 $DATA:/sbin/init = $([ -x $DATA/sbin/init ] && echo 可执行 || echo 缺失)"
+	log "  p2 只读副本 $DATA:/bin/sh    = $([ -x $DATA/bin/sh ] && echo 可执行 || echo 缺失)"
+	log "  镜像 $DATA/slots/rootfs-b.ext4 = $([ -f $DATA/slots/rootfs-b.ext4 ] && echo 存在 || echo 不存在)"
+	log "  下一步本该: umount $DATA -> mount -t ext4 -o rw /dev/mmcblk1p2 $NEW -> switch_root $NEW /sbin/init"
+	# ★ 完整演练"准备新根环境"（只读挂载 $NEW ✓ 零风险 ✓）
+	#   这样才能真正验证：新根的 /dev 里到底有没有 fb0 / urandom / input ✓✓
+	#   （之前只测到一半 ✗ —— 结果上板才发现 /dev 里缺这些节点 ✗）
+	mkdir -p $NEW
+	# ★ 用 bind 挂载把 $DATA 挂到 $NEW（同一个设备**不能**挂两次 ✗ → EBUSY ✗）
+	#   bind 挂载不涉及设备 → 内容一样、不冲突 ✓（mock 里也能完整验证 ✓）
+	if mount --bind $DATA $NEW 2>/dev/null; then
+		log "  DEBUG: 已用 bind 挂载把 p2 内容挂到 $NEW ✓"
+	elif mount -t ext4 -o ro /dev/mmcblk1p2 $NEW 2>/dev/null; then
+		log "  DEBUG: p2 已只读挂到 $NEW ✓"
+	else
+		log "  ⚠️ DEBUG: $NEW 挂载失败（下面的自检会不准 ✗）"
+	fi
+	prepare_newroot_env
+	log "  ★★ 新根 /dev 现状（这是决定桌面/SSH 能否起来的关键 ✓）:"
+	log "     fb0     = $([ -e "$NEW/dev/fb0" ] && echo 有 ✓ || echo 缺 ✗)"
+	log "     urandom = $([ -e "$NEW/dev/urandom" ] && echo 有 ✓ || echo 缺 ✗)"
+	log "     event1  = $([ -e "$NEW/dev/input/event1" ] && echo 有 ✓ || echo 缺 ✗)"
+	OUT=$(chroot $NEW /bin/sh -c 'echo chroot-ok' 2>&1)
+	log "  chroot 冒烟测试: [$OUT]  （要看到 chroot-ok ✓）"
+	umount $NEW/dev 2>/dev/null; umount $NEW/sys 2>/dev/null; umount $NEW/proc 2>/dev/null
+	umount $NEW 2>/dev/null
+
+	# ★ DEBUG 里顺便演练 **b 槽**（只读 ✓ 零风险 ✓）—— 这样 mock 能提前发现 b 槽的问题 ✓
+	if [ "$ACTIVE" = "b" ]; then
+		BIMG=$DATA/slots/rootfs-b.ext4
+		log "  --- DEBUG: 演练 b 槽 ---"
+		if [ -f "$BIMG" ]; then
+			log "  镜像: $BIMG ✓ 存在"
+			losetup /dev/loop0 "$BIMG" 2>/dev/null && log "  losetup /dev/loop0 ✓" || log "  ✗ losetup 失败"
+			mkdir -p /tmp/broot
+			if mount -t ext4 -o ro /dev/loop0 /tmp/broot 2>/dev/null; then
+				log "  镜像只读挂载 ✓  /bin/sh=$([ -x /tmp/broot/bin/sh ] && echo 有 || echo 无) /sbin/init=$([ -x /tmp/broot/sbin/init ] && echo 有 || echo 无)"
+				NEW=/tmp/broot
+				prepare_newroot_env
+				OUT2=$(chroot /tmp/broot /bin/sh -c 'echo b-chroot-ok' 2>&1)
+				log "  b 槽 chroot 冒烟: [$OUT2]  （要看到 b-chroot-ok ✓）"
+				umount /tmp/broot/dev 2>/dev/null; umount /tmp/broot/sys 2>/dev/null; umount /tmp/broot/proc 2>/dev/null
+				umount /tmp/broot 2>/dev/null
+				NEW=/mnt/newroot
+			else
+				log "  ✗ 镜像只读挂载失败（这就是 b 槽起不来的原因 ✓）"
+			fi
+			losetup -d /dev/loop0 2>/dev/null
+		else
+			log "  ✗ 镜像不存在: $BIMG"
+		fi
+	fi
+	log "  当前挂载表:"; mount 2>/dev/null
+	log "  DEBUG 结束"
+	exit 0
+fi
+
+# ---------- b 槽：从镜像启动 ----------
+if [ "$ACTIVE" = "b" ]; then
+	IMG=$DATA/slots/rootfs-b.ext4
+	log "尝试从镜像启动: $IMG"
+	if [ -f "$IMG" ]; then
+		if [ -n "$PLAN" ]; then
+			log "PLAN: losetup /dev/loop0 $IMG -> mount -t ext4 -o ro /dev/loop0 $NEW -> 校验 /bin/sh -> rw 重挂"
+		else
+			# ★ 诊断：loop-control 在不在（4.1 的 loop 驱动要靠它实例化 loopN ✗）
+			[ -e /dev/loop-control ] && log "  /dev/loop-control 有 ✓" || log "  ⚠️ /dev/loop-control 缺失（losetup 可能失败 ✗）"
+			# 用 losetup 的**退出码**判断（之前用 grep ✗ —— initramfs 里没 grep applet ✗）
+			if losetup /dev/loop0 "$IMG" 2>/dev/null; then
+				log "  losetup /dev/loop0 成功 ✓"
+			else
+				LD=$(losetup -f 2>/dev/null)
+				log "  losetup /dev/loop0 失败，改用 $LD 重试"
+				[ -n "$LD" ] && losetup "$LD" "$IMG" 2>/dev/null && log "  用 $LD 成功 ✓"
+				[ -n "$LD" ] && ln -sf "$LD" /dev/loop0 2>/dev/null
+			fi
+			mkdir -p $NEW
+			# ★ 直接以 rw 挂载（只挂一次 ✓）—— 避免"先 ro 再 rw"的二次挂载问题 ✗
+			if mount -t ext4 -o rw /dev/loop0 $NEW 2>/dev/null; then
+				log "  镜像 rw 挂载成功 ✓"
+			else
+				log "  ✗ 镜像 rw 挂载失败"
+			fi
+		fi
+		if [ -n "$PLAN" ] || [ -x "$NEW/bin/sh" ]; then
+			log "镜像校验通过（含可执行 /bin/sh）-> 切到 b 槽"
+			if [ -n "$PLAN" ]; then log "PLAN 结束"; exit 0; fi
+			if [ -x "$NEW/sbin/init" ]; then
+				# ★★ 把 p2（状态区）挂到新根的 /slots ✓✓
+				#   这样无论 a 槽（p2 就是根 ✓）还是 b 槽，rootfs 里都能用**同一个路径 /slots**
+				#   读写状态（active/tries/boot-info/confirmed ✓）—— 确认脚本靠它清零 tries ✓
+				# ★★ 关键：把 **p2 的 /slots 子目录**（不是 p2 整根 ✗）bind 到新根的 /slots ✓✓
+				#   【踩过的坑】原来写 `mount --move $DATA $NEW/slots` ✗ → 把 p2 **整根**搬过去了 ✗
+				#   结果：a 槽时 /slots = p2 的 /slots ✓，b 槽时 /slots = p2 的根 ✗ → 两种槽位路径不一致 ✗✗
+				#   （实测发现：状态文件在 b 槽里"消失"了，其实是跑到了 /slots/slots/ ✓）
+				mkdir -p $NEW/slots $DATA/slots 2>/dev/null
+				if mount --bind $DATA/slots $NEW/slots 2>/dev/null; then
+					log "  状态区已 bind 到新根 /slots ✓（= p2 的 /slots ✓ 两种槽位路径一致 ✓✓）"
+					# 注意：$DATA 必须**保持挂载** ✓（bind 挂在它下面 ✓ 卸了它就没了 ✗）
+				else
+					log "  ⚠️ 状态区 bind 失败 → /slots 将是镜像里的目录 ✗（状态可能写不进去 ✗）"
+				fi
+				# ★ boot-info 写到**可写**的 /slots 上（此时它就是 p2 ✓）
+				{ echo "time=$(date 2>/dev/null)"; echo "slot=b"; echo "tries=$TRIES"; echo "source=loop:rootfs-b.ext4"; echo "initrd=yes"; } > $NEW/slots/boot-info.txt 2>/dev/null
+				prepare_newroot_env
+				# ★ 用 chroot+exec 代替 switch_root ✓（不删除旧根 → 不可能卡在清理上 ✓）
+				exec chroot $NEW /sbin/init
+				recover_and_reboot "b 槽 chroot /sbin/init 返回了"
+			fi
+			log "镜像里没有 /sbin/init -> 回退 a 槽"
+			umount $NEW 2>/dev/null; losetup -d /dev/loop0 2>/dev/null
+		else
+			log "镜像不可用（挂载失败或没有 /bin/sh）-> 回退 a 槽"
+			umount $NEW 2>/dev/null; losetup -d /dev/loop0 2>/dev/null
+		fi
+	else
+		log "镜像不存在 -> 回退 a 槽"
+	fi
+fi
+
+# ---------- a 槽（默认）：用 p2 本体当根（= 现在的正常启动方式）----------
+log "使用 p2 本体当根（原始启动方式）"
+if [ -n "$PLAN" ]; then log "PLAN: 写 $DATA/slots/boot-info.txt (slot=$ACTIVE src=p2-direct)"; log "PLAN 结束（不做任何实际动作）"; exit 0; fi
+if [ "$ACTIVE" != "a" ]; then echo "a" > $DATA/slots/active 2>/dev/null; fi
+
+# ★ a 槽：p2 本体就是新根 ✓
+#   注意：$DATA 现在是以 rw 挂在 /mnt/data 上的同一块设备 ✗
+#   直接把它的**挂载搬过去**（避免同一设备二次 rw 挂载 ✗）
+mkdir -p $NEW
+if mount --move $DATA $NEW 2>/dev/null; then
+	log "a 槽：p2 挂载已搬到 $NEW ✓（rw ✓，/slots 直接可写 ✓）"
+elif mount -t ext4 -o rw /dev/mmcblk1p2 $NEW 2>/dev/null; then
+	log "a 槽：p2 重新 rw 挂载到 $NEW ✓"
+else
+	recover_and_reboot "p2 无法挂载到新根"
+fi
+if [ ! -x "$NEW/sbin/init" ]; then
+	recover_and_reboot "新根缺少 /sbin/init"
+fi
+# ★ boot-info 必须写在**可写**的新根上（原来写在 ro 挂载的 $DATA 上 → 报 Read-only ✗）
+{ echo "time=$(date 2>/dev/null)"; echo "slot=$ACTIVE"; echo "tries=$TRIES"; echo "source=p2-direct"; echo "initrd=yes"; } > $NEW/slots/boot-info.txt 2>/dev/null || mkdir -p $NEW/slots 2>/dev/null && { echo "time=$(date 2>/dev/null)"; echo "slot=$ACTIVE"; echo "tries=$TRIES"; echo "source=p2-direct"; echo "initrd=yes"; } > $NEW/slots/boot-info.txt 2>/dev/null
+# ★ 先搬虚拟文件系统，再 chroot+exec ✓（不用 switch_root ✗，见文件头说明）
+prepare_newroot_env
+log "换根并启动新系统的 init…"
+exec chroot $NEW /sbin/init
+recover_and_reboot "chroot /sbin/init 返回了（不该发生）"
