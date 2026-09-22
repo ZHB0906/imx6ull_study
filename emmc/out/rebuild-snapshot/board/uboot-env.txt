@@ -1,22 +1,22 @@
 # U-Boot 环境变量快照
 #
-# ⚠️ 本文件目前是**部分快照**（板子当时网络不可达 = 网线被拔了 ✗，来不及抓完整 dump ✗）。
-#    但下面这些是**启动链的关键项** ✓，已从板子上逐条读过 ✓。
-#    网线插回后补抓完整 dump（一条命令 ✓）：
-#      ssh root@192.168.10.2 'sh -s' < new/out/rebuild-snapshot/board/grab-env.sh \
-#          > new/out/rebuild-snapshot/board/uboot-env.txt
+# 本文件目前是**部分快照**（板子当时网络不可达 = 网线被拔了，来不及抓完整 dump）。
+# 但下面这些是**启动链的关键项**，已从板子上逐条读过。
+# 网线插回后补抓完整 dump（一条命令）：
+# ssh root@192.168.10.2 'sh -s' < new/out/rebuild-snapshot/board/grab-env.sh \
+# > new/out/rebuild-snapshot/board/uboot-env.txt
 #
-# 抓取依据：fw_printenv（板子上 /etc/fw_env.config 指向 eMMC 用户区 0xC0000，8KB ✓）
-# 抓取时间：2026-09-22（bootcmd 已按 §20 去掉内核 ip= ✓）
+# 抓取依据：fw_printenv（板子上 /etc/fw_env.config 指向 eMMC 用户区 0xC0000，8KB）
+# 抓取时间：2026-09-22（bootcmd 已按 §20 去掉内核 ip=）
 
-## ---- 启动链关键项（已确认 ✓）----
+## ---- 启动链关键项（已确认）----
 
-# ★ initrd 启动链（当前生效 ✓）：先 fatload 三个文件 → 设 bootargs → bootz → 失败则 run emmcboot
-#   ★ 注意 bootargs 里的 ip= 已被去掉（改为用户态 S39eth0 配 eth0 ✓ 见文档 §20 ✓）
+# initrd 启动链（当前生效）：先 fatload 三个文件 → 设 bootargs → bootz → 失败则 run emmcboot
+# 注意 bootargs 里的 ip= 已被去掉（改为用户态 S39eth0 配 eth0 见文档 §20）
 bootcmd=fatload mmc 1:1 83800000 initrd; fatload mmc 1:1 80800000 zImage; fatload mmc 1:1 83000000 imx6ull-14x14-emmc-7-1024x600-c.dtb; setenv bootargs console=ttymxc0,115200 root=/dev/mmcblk1p2 rootwait rw panic=10; bootz 80800000 83800000:0x1A2C82 83000000; run emmcboot
 
-# ★ 兜底（kmcboot）：从 eMMC 直接起（不带 initrd）✓ 一定保留 ✓
-#   （原文见 out/uboot-bootcmd-before-initrd.txt ✓）
+# 兜底（kmcboot）：从 eMMC 直接起（不带 initrd） 一定保留
+# （原文见 out/uboot-bootcmd-before-initrd.txt）
 bootargs=console=ttymxc0,115200 root=/dev/mmcblk1p2 rootwait rw
 ipaddr=192.168.10.2
 serverip=192.168.10.1
@@ -24,6 +24,6 @@ ethaddr=00:04:9f:04:d2:36
 netretry=no
 bootdelay=5
 
-## ---- 待补（网线插回后跑 grab-env.sh ✓）----
-# 其余变量（baudrate / bootfile / loadaddr / gatewayip / netmask 等 ✓）不在上面，
-# 它们**不影响重建与启动** ✓；但为了"完整复原板子"，建议补一份完整 dump ✓。
+## ---- 待补（网线插回后跑 grab-env.sh）----
+# 其余变量（baudrate / bootfile / loadaddr / gatewayip / netmask 等）不在上面，
+# 它们**不影响重建与启动**；但为了"完整复原板子"，建议补一份完整 dump。

@@ -1,10 +1,10 @@
-# 板子实测指纹 —— 待补 ✓
+# 板子实测指纹 —— 待补
 #
-# 抓取时板子网络不可达（No route to host = 网线被拔掉 ✓，用户正在做"不插网线重启"实测 ✓）。
-# 板子本身正常 ✓（bootcmd 改完已成功重启验证过一轮 ✓）。
+# 抓取时板子网络不可达（No route to host = 网线被拔掉，用户正在做"不插网线重启"实测）。
+# 板子本身正常 （bootcmd 改完已成功重启验证过一轮）。
 #
 # 补抓命令（网线插回后，在虚拟机执行）：
-#   ssh root@192.168.10.2 'sh -s' < new/out/rebuild-snapshot/board/grab-fingerprint.sh \
-#       > new/out/rebuild-snapshot/board/fingerprint.txt
+# ssh root@192.168.10.2 'sh -s' < new/out/rebuild-snapshot/board/grab-fingerprint.sh \
+# > new/out/rebuild-snapshot/board/fingerprint.txt
 #
-# 在此之前，请先用 expected-md5.txt 做校验 ✓（那份是从源码算的、"应该长这样"的清单 ✓）。
+# 在此之前，请先用 expected-md5.txt 做校验 （那份是从源码算的、"应该长这样"的清单）。
