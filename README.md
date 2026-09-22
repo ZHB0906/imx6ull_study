@@ -98,7 +98,6 @@
 | `emmc/uboot/` | 正点原子资料里的 `uboot-imx-2016.03-2.1.0-g0ae7e33-v1.7.tar.bz2` | 我们的改动较少 （见 §3.5）|
 | `emmc/apps/SerialTool-src/` |**已随仓库提供**| 上游 GPL-3.0 源码（139 文件）|
 
-> 参考：当年这些包就放在 `/mnt/hgfs/shared_folders/imx6ull/01_source_code/` （见 `2026-09-12_系统裁剪记录.md`）
 
 ### 3.1 环境准备
 
