@@ -1,5 +1,6 @@
 # IMX6ULL（正点原子 ATK-IMX6ULL-ALPHA / eMMC 版）从内核到桌面到 OTA 的完整移植
 
+
 > 一块**i.MX6ULL（Cortex-A7）**开发板，从原厂出厂系统开始，一路做到
 >**自己的内核/驱动 → Buildroot 根文件系统 → Qt5 桌面 → 串口工具 → 固化 eMMC → 整机 A/B OTA 升级**。
 > 全过程（含每一步的原始命令与踩过的坑）都记录在本地保留的中文文档中，未包含在本仓库。
@@ -7,7 +8,45 @@
 **目录**：[硬件](#一硬件与系统) · [已完成](#二已经做到什么) · [**复现同一系统**](#三如何复现出"同一个系统"详细步骤) · [结构](#四仓库结构) · [**第三方与许可证**](#五第三方组件与许可证声明)
 
 ---
+## 零、坑点总结
+## 一页速查
 
+```bash
+# ═══ A 类：真正的 22.04 差异 ═══
+# A1 GCC 10+ -fno-common
+make ... HOSTCC="gcc -fcommon"           # 编内核/U-Boot
+HOST_CFLAGS += -fcommon                  # Buildroot external.mk
+
+# A2 GCC 11 缺 <limits>
+QMAKE_CXXFLAGS += -include limits        # mkspecs/linux-g++/qmake.conf
+
+# A3 glibc 2.35 三处删除
+#   BusyBox: libbb.h 加 stime 垫片
+#   fakeroot: 关掉 EXT2/TAR 镜像，用 output/target
+#   m4: 打补丁去掉 SIGSTKSZ 比较
+
+# A4 nfs-utils 关 UDP
+sudo sed -i '/^\[nfsd\]/a udp=y' /etc/nfs.conf
+sudo systemctl restart nfs-kernel-server
+
+# ═══ B 类：工具链差异 ═══
+# B1 建 gcc-9 软链
+mkdir -p ~/toolchain/gcc9/bin && cd ~/toolchain/gcc9/bin
+for t in gcc cpp; do ln -sf /usr/bin/arm-linux-gnueabihf-$t-9 arm-linux-gnueabihf-$t; done
+for t in ld as ar nm objcopy objdump strip ranlib readelf; do
+  ln -sf /usr/bin/arm-linux-gnueabihf-$t arm-linux-gnueabihf-$t; done
+echo 'export PATH=$HOME/toolchain/gcc9/bin:$PATH' >> ~/.bashrc
+
+# B2 模块禁 PIE
+# Makefile: ccflags-y += -fno-pic -fno-PIE
+
+# B3 uaccess.h 去掉 const
+sed -i '223s/const //' arch/arm/include/asm/uaccess.h
+
+# ═══ C 类：实验方法差异 ═══
+# C1 IP 从内核 ip= 挪到用户态 S39eth0
+# C2 nfsroot 用 vers= 不是 nfsvers=
+```
 ## 一、硬件与系统
 
 | 项 | 值 |
